@@ -148,6 +148,33 @@ img_transform = transforms.Compose([
 ])
 
 
+# ── Greedy Search (faster, simpler) ──
+@torch.no_grad()
+def greedy_search_inference(feature):
+    feature = feature.unsqueeze(0).to(device)
+    encoder_out, h, c = caption_model.encoder(feature)
+
+    start_idx = vocab.word2idx[vocab.START]
+    end_idx   = vocab.word2idx[vocab.END]
+    
+    sequence = [start_idx]
+    inp = torch.tensor([start_idx], device=device)
+
+    for _ in range(MAX_LEN):
+        logits, h, c, _ = caption_model.decoder.forward_step(inp, h, c, encoder_out)
+        predicted = logits.argmax(dim=-1).item()
+        
+        if predicted == end_idx:
+            break
+        
+        sequence.append(predicted)
+        inp = torch.tensor([predicted], device=device)
+
+    words = [vocab.idx2word[i] for i in sequence
+             if vocab.idx2word[i] not in (vocab.START, vocab.END, vocab.PAD)]
+    return " ".join(words)
+
+
 # ── Beam Search with penalties ──
 @torch.no_grad()
 def beam_search_inference(feature, beam_width=BEAM_WIDTH,
@@ -206,33 +233,108 @@ def beam_search_inference(feature, beam_width=BEAM_WIDTH,
 
 
 # ── Prediction function for Gradio ──
-def predict(image):
+def predict(image, search_method, beam_width, length_penalty, repetition_penalty):
     """Take a PIL image -> return generated caption string."""
     if image is None:
-        return "Please upload an image."
+        return "⚠️ Please upload an image first."
+    
     image = image.convert("RGB")
     img_tensor = img_transform(image).unsqueeze(0).to(device)
 
     with torch.no_grad():
         feature = resnet(img_tensor).view(1, -1).squeeze(0)
 
-    caption = beam_search_inference(feature)
-    return caption
+    if search_method == "Greedy Search (Fast)":
+        caption = greedy_search_inference(feature)
+        method_info = "🚀 Greedy decoding"
+    else:  # Beam Search
+        caption = beam_search_inference(
+            feature, 
+            beam_width=int(beam_width),
+            length_penalty=length_penalty,
+            repetition_penalty=repetition_penalty
+        )
+        method_info = f"🔍 Beam search (width={int(beam_width)})"
+    
+    return f"**{caption}**\n\n_{method_info}_"
 
 
 # ── Gradio Interface ──
-demo = gr.Interface(
-    fn=predict,
-    inputs=gr.Image(type="pil", label="Upload an Image"),
-    outputs=gr.Textbox(label="Generated Caption"),
-    title="🧠 Neural Storyteller – Image Captioning",
-    description=(
-        "Upload any image and this Seq2Seq model (ResNet50 encoder + "
-        "Attention LSTM decoder) trained on Flickr30k will generate "
-        "a natural language caption using beam search."
-    ),
-    allow_flagging="never",
-)
+with gr.Blocks(theme=gr.themes.Soft(), title="Neural Storyteller") as demo:
+    gr.Markdown("""
+    # 🧠 Neural Storyteller – AI Image Captioning
+    
+    Upload any image and let the AI generate a natural language description using a **Seq2Seq model** 
+    with ResNet50 encoder and Attention-based LSTM decoder, trained on Flickr30k dataset.
+    
+    ### 🎯 Choose Your Decoding Method:
+    - **Greedy Search**: Fast and simple - picks the most likely word at each step
+    - **Beam Search**: More sophisticated - explores multiple possibilities for better quality captions
+    """)
+    
+    with gr.Row():
+        with gr.Column(scale=1):
+            image_input = gr.Image(type="pil", label="📸 Upload Your Image")
+            
+            gr.Markdown("### ⚙️ Generation Settings")
+            
+            search_method = gr.Radio(
+                choices=["Greedy Search (Fast)", "Beam Search (Better Quality)"],
+                value="Beam Search (Better Quality)",
+                label="Decoding Method",
+                info="Greedy is faster, Beam produces better results"
+            )
+            
+            with gr.Accordion("🔧 Advanced Options (Beam Search Only)", open=False):
+                beam_width = gr.Slider(
+                    minimum=1, maximum=10, value=5, step=1,
+                    label="Beam Width",
+                    info="Number of candidates to explore (higher = better quality but slower)"
+                )
+                
+                length_penalty = gr.Slider(
+                    minimum=0.0, maximum=2.0, value=0.7, step=0.1,
+                    label="Length Penalty",
+                    info="Controls caption length (lower = shorter, higher = longer)"
+                )
+                
+                repetition_penalty = gr.Slider(
+                    minimum=1.0, maximum=2.0, value=1.2, step=0.1,
+                    label="Repetition Penalty",
+                    info="Reduces word repetition (higher = less repetition)"
+                )
+            
+            generate_btn = gr.Button("✨ Generate Caption", variant="primary", size="lg")
+        
+        with gr.Column(scale=1):
+            output_text = gr.Markdown(label="Generated Caption")
+            
+            gr.Markdown("""
+            ### 💡 Tips:
+            - Try both **Greedy** and **Beam** search to compare results
+            - Increase **Beam Width** for more diverse captions
+            - Adjust **Length Penalty** if captions are too short/long
+            - Use **Repetition Penalty** to avoid repeated words
+            
+            ### 📊 Model Details:
+            - **Encoder**: ResNet50 (pretrained on ImageNet)
+            - **Decoder**: Attention-based LSTM
+            - **Training Data**: Flickr30k dataset
+            - **Vocabulary**: ~8000 words
+            """)
+    
+    generate_btn.click(
+        fn=predict,
+        inputs=[image_input, search_method, beam_width, length_penalty, repetition_penalty],
+        outputs=output_text
+    )
+    
+    gr.Markdown("""
+    ---
+    <p style="text-align: center; color: #666;">
+    Built with PyTorch, Gradio, and ❤️ | Model trained on Flickr30k
+    </p>
+    """)
 
 if __name__ == "__main__":
     demo.launch()
