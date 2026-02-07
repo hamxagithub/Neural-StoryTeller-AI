@@ -236,7 +236,11 @@ def beam_search_inference(feature, beam_width=BEAM_WIDTH,
 def predict(image, search_method, beam_width, length_penalty, repetition_penalty):
     """Take a PIL image -> return generated caption string."""
     if image is None:
-        return "⚠️ Please upload an image first."
+        return """
+        <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 30px; border-radius: 15px; text-align: center;">
+            <p style="color: white; font-size: 20px; margin: 0;">⚠️ Please upload an image first</p>
+        </div>
+        """
     
     image = image.convert("RGB")
     img_tensor = img_transform(image).unsqueeze(0).to(device)
@@ -246,7 +250,7 @@ def predict(image, search_method, beam_width, length_penalty, repetition_penalty
 
     if search_method == "Greedy Search (Fast)":
         caption = greedy_search_inference(feature)
-        method_info = "🚀 Greedy decoding"
+        method_info = "🚀 Generated using Greedy Search"
     else:  # Beam Search
         caption = beam_search_inference(
             feature, 
@@ -254,34 +258,64 @@ def predict(image, search_method, beam_width, length_penalty, repetition_penalty
             length_penalty=length_penalty,
             repetition_penalty=repetition_penalty
         )
-        method_info = f"🔍 Beam search (width={int(beam_width)})"
+        method_info = f"🔍 Generated using Beam Search (width={int(beam_width)})"
     
-    return f"**{caption}**\n\n_{method_info}_"
+    # Return beautiful HTML formatted caption
+    return f"""
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px; border-radius: 15px; box-shadow: 0 8px 32px rgba(0,0,0,0.1);">
+        <p style="color: white; font-size: 28px; font-weight: 600; text-align: center; line-height: 1.6; margin: 0; text-shadow: 2px 2px 4px rgba(0,0,0,0.2);">
+            "{caption}"
+        </p>
+        <p style="color: rgba(255,255,255,0.9); font-size: 14px; text-align: center; margin-top: 20px; font-style: italic;">
+            {method_info}
+        </p>
+    </div>
+    """
 
 
 # ── Gradio Interface ──
-with gr.Blocks(theme=gr.themes.Soft(), title="Neural Storyteller") as demo:
+with gr.Blocks(theme=gr.themes.Soft(), title="Neural Storyteller", css="""
+    .caption-box {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 30px;
+        border-radius: 15px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+        margin: 20px 0;
+    }
+    .caption-text {
+        color: white;
+        font-size: 24px;
+        font-weight: 600;
+        text-align: center;
+        line-height: 1.6;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+    }
+    .method-info {
+        color: rgba(255,255,255,0.9);
+        font-size: 14px;
+        text-align: center;
+        margin-top: 15px;
+        font-style: italic;
+    }
+""") as demo:
     gr.Markdown("""
     # 🧠 Neural Storyteller – AI Image Captioning
     
     Upload any image and let the AI generate a natural language description using a **Seq2Seq model** 
     with ResNet50 encoder and Attention-based LSTM decoder, trained on Flickr30k dataset.
-    
-    ### 🎯 Choose Your Decoding Method:
-    - **Greedy Search**: Fast and simple - picks the most likely word at each step
-    - **Beam Search**: More sophisticated - explores multiple possibilities for better quality captions
     """)
     
     with gr.Row():
         with gr.Column(scale=1):
-            image_input = gr.Image(type="pil", label="📸 Upload Your Image")
+            image_input = gr.Image(type="pil", label="📸 Upload Your Image", height=400)
             
+        with gr.Column(scale=1):
             gr.Markdown("### ⚙️ Generation Settings")
             
             search_method = gr.Radio(
                 choices=["Greedy Search (Fast)", "Beam Search (Better Quality)"],
                 value="Beam Search (Better Quality)",
-                label="Decoding Method",
+                label="🎯 Decoding Method",
                 info="Greedy is faster, Beam produces better results"
             )
             
@@ -303,25 +337,27 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Neural Storyteller") as demo:
                     label="Repetition Penalty",
                     info="Reduces word repetition (higher = less repetition)"
                 )
-            
-            generate_btn = gr.Button("✨ Generate Caption", variant="primary", size="lg")
+    
+    generate_btn = gr.Button("✨ Generate Caption", variant="primary", size="lg", scale=1)
+    
+    # Beautiful caption display area
+    gr.Markdown("## 📝 Generated Caption")
+    output_text = gr.HTML(label="")
+    
+    with gr.Accordion("💡 Tips & Model Details", open=False):
+        gr.Markdown("""
+        ### Tips:
+        - Try both **Greedy** and **Beam** search to compare results
+        - Increase **Beam Width** for more diverse captions
+        - Adjust **Length Penalty** if captions are too short/long
+        - Use **Repetition Penalty** to avoid repeated words
         
-        with gr.Column(scale=1):
-            output_text = gr.Markdown(label="Generated Caption")
-            
-            gr.Markdown("""
-            ### 💡 Tips:
-            - Try both **Greedy** and **Beam** search to compare results
-            - Increase **Beam Width** for more diverse captions
-            - Adjust **Length Penalty** if captions are too short/long
-            - Use **Repetition Penalty** to avoid repeated words
-            
-            ### 📊 Model Details:
-            - **Encoder**: ResNet50 (pretrained on ImageNet)
-            - **Decoder**: Attention-based LSTM
-            - **Training Data**: Flickr30k dataset
-            - **Vocabulary**: ~8000 words
-            """)
+        ### Model Details:
+        - **Encoder**: ResNet50 (pretrained on ImageNet)
+        - **Decoder**: Attention-based LSTM
+        - **Training Data**: Flickr30k dataset
+        - **Vocabulary**: ~8000 words
+        """)
     
     generate_btn.click(
         fn=predict,
